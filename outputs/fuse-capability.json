@@ -1,0 +1,202 @@
+{
+    "Id": "{fd9c09e4-3496-4e38-ab59-f88f5c557379}",
+    "Parameters": {
+        "capabilities": [
+            "SimultaneousMotorMoves",
+            "FlxCorruptionDetection",
+            "GalvoPrefilterConfig",
+            "DoserAngleFineTuning",
+            "UnencryptedLogDownload",
+            "FastQuartzTubeHeaterPausing",
+            "OverrideHeaterGain",
+            "PrimingWithPreprintTasks",
+            "MaterialSpecificHeat",
+            "HeaterCANRetries",
+            "FleetControl",
+            "OpenMaterialLicense",
+            "CooldownConfig",
+            "JobBundles",
+            "ExplicitAddToRunningJob"
+        ],
+        "connectionInterface": "PROTOCOL_INTERFACE_ETHERNET",
+        "ipAddresses": [
+            "10.120.8.38"
+        ],
+        "printer": {
+            "DeviceAlias": "",
+            "FactoryMACAddress": "",
+            "MachineTypeId": "FS30-1-0",
+            "Serial": "AquaCardinal"
+        },
+        "printerID": "e7bc2fe4c9f5bcabab441f3d31e1f9c6b11ad6caa391d36906aa4460595841667538f4a2c969d62d2e34e54ee14e0f1dae45fef752752c7465514835b657a62c",
+        "version": {
+            "build": {
+                "compatible": 1,
+                "name": "1.24.0-2828",
+                "num": 11,
+                "timestamp": "1771499641",
+                "type": "release",
+                "uuid": "10053747-8ca4-42c0-9dd8-63851309b34e"
+            },
+            "can-firmware-flash": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "can-firmware-flash",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "candybus": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "candybus",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "compatible": 1,
+            "factory-reset": {
+                "commit": "INVALID",
+                "compatible": 1,
+                "name": "factory-reset",
+                "revision": "r1",
+                "version": "r1"
+            },
+            "flx": {
+                "compatible": 6
+            },
+            "formule": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 4,
+                "logDownload": {
+                    "compatible": "1"
+                },
+                "name": "formule",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "fuse1-firmwares": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "fuse1-firmwares",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "gilchrist-gadget": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "gilchrist-gadget",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "jenkins": {
+                "number": 2828,
+                "tag": "jenkins-Embedded-primitives-build-legacy-rc-formware-2828",
+                "url": "https://jenkins.devops.priv.prod.gcp.formlabs.cloud/job/Embedded/job/primitives/job/build-legacy-rc-formware/2828/"
+            },
+            "jsonschema-catalog": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "jsonschema-catalog",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "magneto-module": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "magneto-module",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "mordor-python-base": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "mordor-python-base",
+                "revision": "r44",
+                "version": "1"
+            },
+            "mordor-python-cython": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "mordor-python-cython",
+                "revision": "r44",
+                "version": "1"
+            },
+            "palantir": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "palantir",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "pilkington-heater-control": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "pilkington-heater-control",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "pilkington-omnibus": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "pilkington-omnibus",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "poky": {
+                "branch": "origin/release-candidate/pilkington/1.24.0",
+                "hash": "627df38047963854bd1f62e02c209e7b5ceb22fa"
+            },
+            "printercam-server": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "printercam-server",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "rfidbus": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "rfidbus",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "rfidbus-powder": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "rfidbus-powder",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "rtkb-module": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "rtkb-module",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "sauron": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "sauron",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "set-priorities": {
+                "commit": "2262aa64f17c5660ef1f1d8c3b8e6671e71f8707",
+                "compatible": 1,
+                "name": "set-priorities",
+                "revision": "r0",
+                "version": "1.0+git2262aa64f17c5660ef1f1d8c3b8e6671e71f8707"
+            },
+            "u-boot": {
+                "compatible": 4
+            },
+            "updater": {
+                "compatible": 1,
+                "machine": "formlabs-am57xx"
+            }
+        }
+    },
+    "ReplyToMethod": "PROTOCOL_METHOD_GET_INFORMATION",
+    "Success": true,
+    "Version": 1
+}

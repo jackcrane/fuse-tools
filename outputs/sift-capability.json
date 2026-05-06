@@ -1,0 +1,128 @@
+{
+    "Id": "{947d9ef8-45e6-4456-a2b5-564651d7de59}",
+    "Parameters": {
+        "capabilities": [
+        ],
+        "connectionInterface": "PROTOCOL_INTERFACE_ETHERNET",
+        "ipAddresses": [
+            "10.120.8.33"
+        ],
+        "printer": {
+            "DeviceAlias": "",
+            "FactoryMACAddress": "",
+            "MachineTypeId": "SIFT-1-0",
+            "Serial": "SapphireQuoll"
+        },
+        "printerID": "05f6b98ddfaf7e809159d71b7f8b7a16d0ddc959132ff8e1344edf5edf8f2b01a3d2684f0484954e7769921f1442d0c7f48228155904370abe1b1250deb2b58b",
+        "version": {
+            "build": {
+                "compatible": 1,
+                "name": "1.7.0-2589",
+                "num": 0,
+                "timestamp": "1744360922",
+                "type": "release",
+                "uuid": "5c370065-e0f2-4adf-b1fb-4e72cad20947"
+            },
+            "can-firmware-flash": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "can-firmware-flash",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "candybus": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "candybus",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "compatible": 1,
+            "factory-reset": {
+                "commit": "INVALID",
+                "compatible": 1,
+                "name": "factory-reset",
+                "revision": "r1",
+                "version": "r1"
+            },
+            "formule": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 4,
+                "logDownload": {
+                    "compatible": "1"
+                },
+                "name": "formule",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "gilchrist-gadget": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "gilchrist-gadget",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "jenkins": {
+                "number": 2589,
+                "tag": "jenkins-Embedded-primitives-build-legacy-rc-formware-2589",
+                "url": "https://jenkins.devops.priv.prod.gcp.formlabs.cloud/job/Embedded/job/primitives/job/build-legacy-rc-formware/2589/"
+            },
+            "jsonschema-catalog": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "jsonschema-catalog",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "mordor-python-base": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "mordor-python-base",
+                "revision": "r44",
+                "version": "1"
+            },
+            "mordor-python-cython": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "mordor-python-cython",
+                "revision": "r44",
+                "version": "1"
+            },
+            "palantir": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "palantir",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "poky": {
+                "branch": "origin/release-candidate/sift/1.7.0",
+                "hash": "5bec025dff39db96921e3afd47f3e125c8f12d2a"
+            },
+            "sift1-firmwares": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "sift1-firmwares",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "siftcontrol": {
+                "commit": "7a203843bcec7c03dfe41b051113ca4e8f7cdbc9",
+                "compatible": 1,
+                "name": "siftcontrol",
+                "revision": "r0",
+                "version": "1.0+git7a203843bcec7c03dfe41b051113ca4e8f7cdbc9"
+            },
+            "u-boot": {
+                "compatible": 4
+            },
+            "updater": {
+                "compatible": 1,
+                "machine": "formlabs-am57xx"
+            }
+        }
+    },
+    "ReplyToMethod": "PROTOCOL_METHOD_GET_INFORMATION",
+    "Success": true,
+    "Version": 1
+}
