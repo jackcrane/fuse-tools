@@ -11,6 +11,10 @@ PORT = 35
 CONNECT_TIMEOUT = 0.35
 REQUEST_TIMEOUT = 1.0
 MAX_WORKERS = 64
+DEFAULT_SUBNETS = [
+    "10.120.8.0/24",
+    "10.120.10.0/24",
+]
 
 
 class Printer(TypedDict):
@@ -204,11 +208,6 @@ def discover_printers(
 
 
 if __name__ == "__main__":
-    printers = discover_printers(
-        [
-            "10.120.8.0/24",
-            "10.120.10.0/24",
-        ]
-    )
+    printers = discover_printers(DEFAULT_SUBNETS)
 
     print(json.dumps(printers, indent=2))
