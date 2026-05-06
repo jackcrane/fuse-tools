@@ -4,7 +4,7 @@ import socket
 import struct
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Generator, List, Optional, TypedDict
+from typing import Callable, Generator, List, Optional, TypedDict
 
 
 PORT = 35
@@ -167,6 +167,7 @@ def worker(ip: str) -> Optional[Printer]:
 
 def discover_printers(
     subnets: List[str],
+    on_found: Optional[Callable[[Printer], None]] = None,
 ) -> List[Printer]:
     printers_by_id: dict[str, Printer] = {}
 
@@ -200,6 +201,9 @@ def discover_printers(
                     f'Found {result["serial"]} '
                     f'at {result["ip"]}'
                 )
+
+                if on_found is not None:
+                    on_found(result)
 
             except Exception:
                 pass

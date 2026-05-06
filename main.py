@@ -1,16 +1,19 @@
 import signal
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from typing import Optional
 
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtGui import QFontDatabase, QImage, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QProgressBar,
+    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -21,7 +24,7 @@ from PyQt5.QtWidgets import (
 
 from discover_printers import DEFAULT_SUBNETS, discover_printers
 from printer_status import get_printer_status
-from record import run_printer_video_stream
+from record import VideoRecorder, run_printer_video_stream
 
 
 def format_status_details(printer: dict, status_response: dict) -> str:
@@ -93,6 +96,8 @@ def format_status_details(printer: dict, status_response: dict) -> str:
 
 
 class AppSignals(QObject):
+    printer_found = pyqtSignal(dict)
+    printer_status_updated = pyqtSignal(str, str)
     discovery_complete = pyqtSignal(list)
     discovery_failed = pyqtSignal(str)
 
@@ -102,6 +107,7 @@ class DetailSignals(QObject):
     status_failed = pyqtSignal(str)
     frame_updated = pyqtSignal(bytes)
     video_failed = pyqtSignal(str)
+    recording_state_changed = pyqtSignal(bool, str)
 
 
 class PrinterDetailWindow(QWidget):
@@ -109,25 +115,55 @@ class PrinterDetailWindow(QWidget):
         super().__init__()
         self.printer = dict(printer)
         self.stop_event = threading.Event()
+        self.recorder: Optional[VideoRecorder] = None
+        self.recording_started_at: Optional[float] = None
         self.signals = DetailSignals()
         self.signals.status_updated.connect(self._update_status)
         self.signals.status_failed.connect(self._show_status_error)
         self.signals.frame_updated.connect(self._update_video_frame)
         self.signals.video_failed.connect(self._show_video_error)
+        self.signals.recording_state_changed.connect(
+            self._set_recording_state
+        )
 
         self.setWindowTitle(f'{self.printer["serial"]} Details')
         self.resize(1100, 720)
         self._build_ui()
+        self.recording_timer = QTimer(self)
+        self.recording_timer.timeout.connect(
+            self._update_recording_duration
+        )
         self._start_background_tasks()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
+        title_row = QHBoxLayout()
         title = QLabel(
             f'{self.printer["serial"]} ({self.printer["ip"]})'
         )
         title.setStyleSheet("font-size: 20px; font-weight: 600;")
-        layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+
+        self.recording_indicator = QLabel("\u25cf")
+        self.recording_indicator.setStyleSheet(
+            "color: #d7263d; font-size: 18px;"
+        )
+        self.recording_indicator.hide()
+        title_row.addWidget(self.recording_indicator)
+
+        self.recording_duration_label = QLabel("00:00:00")
+        fixed_font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        fixed_font.setPointSize(14)
+        self.recording_duration_label.setFont(fixed_font)
+        self.recording_duration_label.hide()
+        title_row.addWidget(self.recording_duration_label)
+
+        self.record_button = QPushButton("Start recording")
+        self.record_button.clicked.connect(self._toggle_recording)
+        title_row.addWidget(self.record_button)
+        layout.addLayout(title_row)
 
         self.summary_label = QLabel("Loading status...")
         layout.addWidget(self.summary_label)
@@ -192,10 +228,29 @@ class PrinterDetailWindow(QWidget):
     def _run_video_stream(self) -> None:
         run_printer_video_stream(
             printer_ip=self.printer["ip"],
-            on_frame=lambda frame: self.signals.frame_updated.emit(frame),
+            on_frame=self._handle_video_frame,
             stop_requested=self.stop_event.is_set,
             on_error=lambda exc: self.signals.video_failed.emit(str(exc)),
         )
+
+    def _handle_video_frame(self, frame: bytes) -> None:
+        if self.recorder is not None:
+            try:
+                self.recorder.write_frame(frame)
+            except Exception as exc:
+                recorder = self.recorder
+                self.recorder = None
+                if recorder is not None:
+                    try:
+                        recorder.stop()
+                    except Exception:
+                        pass
+                self.signals.recording_state_changed.emit(False, "")
+                self.signals.video_failed.emit(
+                    f"Recording failed: {exc}"
+                )
+
+        self.signals.frame_updated.emit(frame)
 
     def _update_status(self, summary: str, details: str) -> None:
         self.summary_label.setText(f"Status: {summary}")
@@ -222,6 +277,104 @@ class PrinterDetailWindow(QWidget):
     def _show_video_error(self, message: str) -> None:
         self.video_status_label.setText(f"Video unavailable: {message}")
 
+    def _toggle_recording(self) -> None:
+        if self.recorder is None:
+            self._start_recording()
+            return
+
+        self._stop_recording()
+
+    def _start_recording(self) -> None:
+        default_filename = f'{self.printer["serial"]}.mp4'
+
+        try:
+            status_response = get_printer_status(self.printer["ip"])
+            job_guid = status_response["Parameters"]["printingJobGuid"]
+            if job_guid:
+                default_filename = (
+                    f'{self.printer["serial"]}_{job_guid}.mp4'
+                )
+        except Exception:
+            pass
+
+        output_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Recording",
+            default_filename,
+            "MP4 Video (*.mp4)",
+        )
+
+        if not output_path:
+            return
+
+        try:
+            recorder = VideoRecorder(output_path)
+            recorder.start()
+        except Exception as exc:
+            self.video_status_label.setText(
+                f"Recording unavailable: {exc}"
+            )
+            return
+
+        self.recorder = recorder
+        self.recording_started_at = time.time()
+        self.signals.recording_state_changed.emit(
+            True,
+            f"Recording to {output_path}",
+        )
+
+    def _stop_recording(self) -> None:
+        recorder = self.recorder
+        self.recorder = None
+        self.recording_started_at = None
+
+        if recorder is not None:
+            try:
+                recorder.stop()
+            except Exception as exc:
+                self.video_status_label.setText(
+                    f"Recording stop failed: {exc}"
+                )
+
+        self.signals.recording_state_changed.emit(False, "Live video")
+
+    def _set_recording_state(
+        self,
+        is_recording: bool,
+        status_text: str,
+    ) -> None:
+        self.recording_indicator.setVisible(is_recording)
+        self.recording_duration_label.setVisible(is_recording)
+        self.record_button.setText(
+            "Stop recording" if is_recording else "Start recording"
+        )
+
+        if is_recording:
+            self.recording_duration_label.setText("00:00:00")
+            self.recording_timer.start(1000)
+        else:
+            self.recording_timer.stop()
+            self.recording_duration_label.setText("00:00:00")
+
+        if status_text:
+            self.video_status_label.setText(status_text)
+
+    def _update_recording_duration(self) -> None:
+        if self.recording_started_at is None:
+            self.recording_duration_label.setText("00:00:00")
+            return
+
+        elapsed_seconds = max(
+            0,
+            int(time.time() - self.recording_started_at),
+        )
+        hours = elapsed_seconds // 3600
+        minutes = (elapsed_seconds % 3600) // 60
+        seconds = elapsed_seconds % 60
+        self.recording_duration_label.setText(
+            f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        )
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         pixmap = self.video_label.pixmap()
@@ -238,6 +391,7 @@ class PrinterDetailWindow(QWidget):
 
     def closeEvent(self, event) -> None:
         self.stop_event.set()
+        self._stop_recording()
         super().closeEvent(event)
 
 
@@ -245,10 +399,15 @@ class PrinterDiscoveryWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.signals = AppSignals()
+        self.signals.printer_found.connect(self._add_printer)
+        self.signals.printer_status_updated.connect(
+            self._update_printer_status
+        )
         self.signals.discovery_complete.connect(self._show_printers)
         self.signals.discovery_failed.connect(self._show_error)
         self.detail_windows: list[PrinterDetailWindow] = []
         self.printers: list[dict] = []
+        self.printer_rows: dict[str, int] = {}
 
         self.setWindowTitle("Printer Discovery")
         self.resize(860, 480)
@@ -288,36 +447,26 @@ class PrinterDiscoveryWindow(QMainWindow):
 
     def _discover_printers(self) -> None:
         try:
-            printers = discover_printers(DEFAULT_SUBNETS)
-            printers = self._attach_status_labels(printers)
+            printers = discover_printers(
+                DEFAULT_SUBNETS,
+                on_found=self._handle_printer_found,
+            )
             self.signals.discovery_complete.emit(printers)
         except Exception as exc:
             self.signals.discovery_failed.emit(str(exc))
 
-    def _attach_status_labels(self, printers: list[dict]) -> list[dict]:
-        if not printers:
-            return []
+    def _handle_printer_found(self, printer: dict) -> None:
+        self.signals.printer_found.emit(dict(printer))
+        threading.Thread(
+            target=self._resolve_printer_status,
+            args=(dict(printer),),
+            daemon=True,
+        ).start()
 
-        printers_with_status: list[dict] = []
-
-        with ThreadPoolExecutor(max_workers=min(8, len(printers))) as executor:
-            futures = {
-                executor.submit(
-                    self._get_status_label,
-                    printer["ip"],
-                ): printer
-                for printer in printers
-            }
-
-            for future in as_completed(futures):
-                printer = futures[future]
-                printer_with_status = dict(printer)
-                printer_with_status["status"] = future.result()
-                printers_with_status.append(printer_with_status)
-
-        return sorted(
-            printers_with_status,
-            key=lambda printer: printer["serial"],
+    def _resolve_printer_status(self, printer: dict) -> None:
+        self.signals.printer_status_updated.emit(
+            printer["printerId"],
+            self._get_status_label(printer["ip"]),
         )
 
     def _get_status_label(self, printer_ip: str) -> str:
@@ -329,18 +478,7 @@ class PrinterDiscoveryWindow(QMainWindow):
             return "Unknown"
 
     def _show_printers(self, printers: list[dict]) -> None:
-        self.printers = printers
         self.progress_bar.hide()
-        self.table.setRowCount(len(printers))
-
-        for row, printer in enumerate(printers):
-            for column, key in enumerate(
-                ["serial", "machineTypeId", "ip", "status"]
-            ):
-                item = QTableWidgetItem(str(printer[key]))
-                self.table.setItem(row, column, item)
-
-        self.table.resizeColumnsToContents()
 
         if printers:
             self.status_label.setText(f"Found {len(printers)} printer(s).")
@@ -350,6 +488,45 @@ class PrinterDiscoveryWindow(QMainWindow):
     def _show_error(self, message: str) -> None:
         self.progress_bar.hide()
         self.status_label.setText(f"Printer discovery failed: {message}")
+
+    def _add_printer(self, printer: dict) -> None:
+        if printer["printerId"] in self.printer_rows:
+            return
+
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        printer_with_status = dict(printer)
+        printer_with_status["status"] = "Checking..."
+        self.printers.append(printer_with_status)
+        self.printer_rows[printer["printerId"]] = row
+
+        for column, key in enumerate(
+            ["serial", "machineTypeId", "ip", "status"]
+        ):
+            item = QTableWidgetItem(str(printer_with_status[key]))
+            self.table.setItem(row, column, item)
+
+        self.table.resizeColumnsToContents()
+        self.status_label.setText(
+            f"Found {len(self.printers)} printer(s)..."
+        )
+
+    def _update_printer_status(
+        self,
+        printer_id: str,
+        status: str,
+    ) -> None:
+        row = self.printer_rows.get(printer_id)
+        if row is None:
+            return
+
+        self.printers[row]["status"] = status
+        status_item = self.table.item(row, 3)
+        if status_item is None:
+            self.table.setItem(row, 3, QTableWidgetItem(status))
+        else:
+            status_item.setText(status)
 
     def _open_selected_printer(self, *_args) -> None:
         row = self.table.currentRow()
