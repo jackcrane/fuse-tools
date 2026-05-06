@@ -38,6 +38,8 @@ class PrinterDetailWindow(QWidget):
         self.recorder: Optional[VideoRecorder] = None
         self.recording_started_at: Optional[float] = None
         self.recording_stop_mode = "manual"
+        self.recording_idle_stop_armed = False
+        self.last_status_summary: Optional[str] = None
         self.signals = DetailSignals()
         self.signals.status_updated.connect(self._update_status)
         self.signals.status_failed.connect(self._show_status_error)
@@ -175,11 +177,19 @@ class PrinterDetailWindow(QWidget):
         if (
             self.recorder is not None
             and self.recording_stop_mode == "until_idle"
-            and summary == "Idle"
         ):
-            self.signals.stop_recording_requested.emit(
-                "Recording stopped automatically when the printer became idle."
-            )
+            if summary != "Idle":
+                self.recording_idle_stop_armed = True
+            elif (
+                self.recording_idle_stop_armed
+                and self.last_status_summary is not None
+                and self.last_status_summary != "Idle"
+            ):
+                self.signals.stop_recording_requested.emit(
+                    "Recording stopped automatically when the printer became idle."
+                )
+
+        self.last_status_summary = summary
 
     def _show_status_error(self, message: str) -> None:
         self.summary_label.setText("Status: Unknown")
@@ -211,6 +221,7 @@ class PrinterDetailWindow(QWidget):
 
     def _start_recording(self) -> None:
         default_filename = f'{self.printer["serial"]}.mp4'
+        status_response = None
 
         try:
             status_response = get_printer_status(self.printer["ip"])
@@ -246,6 +257,15 @@ class PrinterDetailWindow(QWidget):
         self.recorder = recorder
         self.recording_started_at = time.time()
         self.recording_stop_mode = stop_dialog.selected_mode()
+        self.recording_idle_stop_armed = False
+
+        if (
+            self.recording_stop_mode == "until_idle"
+            and status_response is not None
+            and status_response["Parameters"]["isPrinting"]
+        ):
+            self.recording_idle_stop_armed = True
+
         self.signals.recording_state_changed.emit(
             True,
             f"Recording to {output_path}",
@@ -256,6 +276,7 @@ class PrinterDetailWindow(QWidget):
         self.recorder = None
         self.recording_started_at = None
         self.recording_stop_mode = "manual"
+        self.recording_idle_stop_armed = False
 
         if recorder is not None:
             try:
