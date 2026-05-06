@@ -1,53 +1,67 @@
 import asyncio
-import websockets
-import subprocess
 import json
+from typing import Callable, Optional
+
+import websockets
 
 FPS = 15
 POLL_INTERVAL_MS = 1000 / FPS
 
-FFMPEG_CMD = [
-    "ffmpeg",
-    "-y",
-    "-loglevel", "info",
-    "-f", "image2pipe",
-    "-vcodec", "mjpeg",
-    "-r", str(FPS),
-    "-i", "-",
-    "-c:v", "libx264",
-    "-pix_fmt", "yuv420p",
-    "output.mp4"
-]
 
-async def main():
-    print("Starting FFmpeg...")
-    ffmpeg = subprocess.Popen(
-        FFMPEG_CMD,
-        stdin=subprocess.PIPE
+async def stream_printer_video(
+    printer_ip: str,
+    on_frame: Callable[[bytes], None],
+    stop_requested: Callable[[], bool],
+    on_error: Optional[Callable[[Exception], None]] = None,
+) -> None:
+    try:
+        async with websockets.connect(
+            f"ws://{printer_ip}:8084/"
+        ) as websocket:
+            async def poll() -> None:
+                while not stop_requested():
+                    await websocket.send(
+                        json.dumps({"action": "start"})
+                    )
+                    await asyncio.sleep(POLL_INTERVAL_MS / 1000)
+
+            async def receive() -> None:
+                while not stop_requested():
+                    data = await websocket.recv()
+
+                    if isinstance(data, str):
+                        continue
+
+                    on_frame(data)
+
+            await asyncio.gather(poll(), receive())
+    except Exception as exc:
+        if on_error is not None and not stop_requested():
+            on_error(exc)
+
+
+def run_printer_video_stream(
+    printer_ip: str,
+    on_frame: Callable[[bytes], None],
+    stop_requested: Callable[[], bool],
+    on_error: Optional[Callable[[Exception], None]] = None,
+) -> None:
+    asyncio.run(
+        stream_printer_video(
+            printer_ip=printer_ip,
+            on_frame=on_frame,
+            stop_requested=stop_requested,
+            on_error=on_error,
+        )
     )
 
-    print("Connecting to WebSocket...")
-    async with websockets.connect("ws://10.120.8.38:8084/") as ws:
-        print("Connected!")
 
-        async def poll():
-            while True:
-                await ws.send(json.dumps({"action": "start"}))
-                await asyncio.sleep(POLL_INTERVAL_MS / 1000)
+if __name__ == "__main__":
+    def print_frame_info(frame_bytes: bytes) -> None:
+        print(f"Received frame: {len(frame_bytes)} bytes")
 
-        async def receive():
-            frame = 0
-            while True:
-                data = await ws.recv()
-
-                if isinstance(data, str):
-                    continue
-
-                frame += 1
-
-                ffmpeg.stdin.write(data)
-                ffmpeg.stdin.flush()
-
-        await asyncio.gather(poll(), receive())
-
-asyncio.run(main())
+    run_printer_video_stream(
+        printer_ip="10.120.8.38",
+        on_frame=print_frame_info,
+        stop_requested=lambda: False,
+    )

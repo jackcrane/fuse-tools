@@ -1,166 +1,304 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import signal
+import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import objc
-from AppKit import (
-    NSApp,
-    NSApplication,
-    NSApplicationActivationPolicyRegular,
-    NSBackingStoreBuffered,
-    NSBezelBorder,
-    NSMakeRect,
-    NSProgressIndicator,
-    NSScrollView,
-    NSTableColumn,
-    NSTableView,
-    NSTextField,
-    NSWindow,
-    NSWindowStyleMaskClosable,
-    NSWindowStyleMaskMiniaturizable,
-    NSWindowStyleMaskResizable,
-    NSWindowStyleMaskTitled,
+from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QProgressBar,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from Foundation import NSObject
-from PyObjCTools import AppHelper
 
 from discover_printers import DEFAULT_SUBNETS, discover_printers
 from printer_status import get_printer_status
+from record import run_printer_video_stream
 
 
-class PrinterTableDataSource(NSObject):
-    def init(self):
-        self = objc.super(PrinterTableDataSource, self).init()
-        if self is None:
-            return None
+def format_status_details(printer: dict, status_response: dict) -> str:
+    parameters = status_response["Parameters"]
+    cylinder_last_print = parameters["cylinderLastPrint"]
+    cylinder_tracking = parameters["cylinderTracking"]
+    running_jobs = parameters["currentlyRunningJobHeights"]
 
-        self.printers = []
-        return self
+    lines = [
+        f'Serial: {printer["serial"]}',
+        f'IP Address: {printer["ip"]}',
+        f'Machine Type: {printer["machineTypeId"]}',
+        f'Status: {"Printing" if parameters["isPrinting"] else "Idle"}',
+        f'Accepting Jobs: {parameters["isAcceptingJobs"]}',
+        f'Primed: {parameters["isPrimed"]}',
+        f'Bed Temperature (C): {parameters["bedTemperature_C"]:.2f}',
+        f'Powder Level: {parameters["powderLevel"]}',
+        f'Material: {parameters["printerMaterial"]}',
+        f'Material Credit (g): {parameters["materialCredit_g"]}',
+        f'Printing Layer: {parameters["printingLayer"]}',
+        (
+            "Estimated Time Remaining (min): "
+            f'{parameters["estimatedPrintTimeRemaining_ms"] / 60000:.1f}'
+        ),
+        f'Printing Job GUID: {parameters["printingJobGuid"]}',
+        f'Job Revision: {parameters["printingJobRevision"]}',
+        f'Cylinder Serial: {parameters["cylinderSerial"]}',
+        f'Cylinder Material: {parameters["cylinderMaterialCode"]}',
+        f'Cylinder Z Range (mm): {parameters["cylinderZAxisRange_mm"]}',
+        (
+            "Cylinder Last Print: "
+            f'{cylinder_last_print["printGuid"]}'
+        ),
+        (
+            "Last Print Progress: "
+            f'{cylinder_last_print["layersPrinted"]}/'
+            f'{cylinder_last_print["totalLayers"]} layers'
+        ),
+        f'Last Print Updated: {cylinder_last_print["metadataUpdateTimestamp"]}',
+        (
+            "Tracking Layers: "
+            f'{cylinder_tracking["numberOfLayers"]}'
+        ),
+        (
+            "Tracking Travel (mm): "
+            f'{cylinder_tracking["totalTravel_mm"]:.2f}'
+        ),
+        f"Running Jobs: {len(running_jobs)}",
+        f'Issues: {len(parameters["printerIssues"])}',
+    ]
 
-    def setPrinters_(self, printers):
-        self.printers = list(printers)
+    if running_jobs:
+        first_job = running_jobs[0]
+        lines.extend(
+            [
+                f'Current Job GUID: {first_job["jobGuid"]}',
+                (
+                    "Core Print Height (mm): "
+                    f'{first_job["heightCorePrint_mm"]}'
+                ),
+                (
+                    "Hot Precoats Height (mm): "
+                    f'{first_job["heightHotPrecoats_mm"]}'
+                ),
+            ]
+        )
 
-    def numberOfRowsInTableView_(self, _table_view):
-        return len(self.printers)
-
-    def tableView_objectValueForTableColumn_row_(
-        self,
-        _table_view,
-        table_column,
-        row,
-    ):
-        printer = self.printers[row]
-        identifier = str(table_column.identifier())
-
-        if identifier == "serial":
-            return printer["serial"]
-        if identifier == "machineTypeId":
-            return printer["machineTypeId"]
-        if identifier == "ip":
-            return printer["ip"]
-        if identifier == "status":
-            return printer["status"]
-
-        return ""
+    return "\n".join(lines)
 
 
-class AppDelegate(NSObject):
-    def applicationDidFinishLaunching_(self, _notification):
-        self.data_source = PrinterTableDataSource.alloc().init()
-        self._build_window()
+class AppSignals(QObject):
+    discovery_complete = pyqtSignal(list)
+    discovery_failed = pyqtSignal(str)
+
+
+class DetailSignals(QObject):
+    status_updated = pyqtSignal(str, str)
+    status_failed = pyqtSignal(str)
+    frame_updated = pyqtSignal(bytes)
+    video_failed = pyqtSignal(str)
+
+
+class PrinterDetailWindow(QWidget):
+    def __init__(self, printer: dict) -> None:
+        super().__init__()
+        self.printer = dict(printer)
+        self.stop_event = threading.Event()
+        self.signals = DetailSignals()
+        self.signals.status_updated.connect(self._update_status)
+        self.signals.status_failed.connect(self._show_status_error)
+        self.signals.frame_updated.connect(self._update_video_frame)
+        self.signals.video_failed.connect(self._show_video_error)
+
+        self.setWindowTitle(f'{self.printer["serial"]} Details')
+        self.resize(1100, 720)
+        self._build_ui()
+        self._start_background_tasks()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        title = QLabel(
+            f'{self.printer["serial"]} ({self.printer["ip"]})'
+        )
+        title.setStyleSheet("font-size: 20px; font-weight: 600;")
+        layout.addWidget(title)
+
+        self.summary_label = QLabel("Loading status...")
+        layout.addWidget(self.summary_label)
+
+        splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(splitter, 1)
+
+        self.status_text = QTextEdit()
+        self.status_text.setReadOnly(True)
+        self.status_text.setPlainText("Waiting for status...")
+        splitter.addWidget(self.status_text)
+
+        video_panel = QWidget()
+        video_layout = QVBoxLayout(video_panel)
+        video_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.video_status_label = QLabel("Connecting to live video...")
+        video_layout.addWidget(self.video_status_label)
+
+        self.video_label = QLabel()
+        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setMinimumSize(480, 320)
+        self.video_label.setStyleSheet(
+            "background: #111; color: #ddd; border: 1px solid #555;"
+        )
+        self.video_label.setText("Waiting for video...")
+        video_layout.addWidget(self.video_label, 1)
+
+        splitter.addWidget(video_panel)
+        splitter.setSizes([520, 520])
+
+    def _start_background_tasks(self) -> None:
+        threading.Thread(
+            target=self._poll_status_loop,
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._run_video_stream,
+            daemon=True,
+        ).start()
+
+    def _poll_status_loop(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                status_response = get_printer_status(self.printer["ip"])
+                summary = (
+                    "Printing"
+                    if status_response["Parameters"]["isPrinting"]
+                    else "Idle"
+                )
+                details = format_status_details(
+                    self.printer,
+                    status_response,
+                )
+                self.signals.status_updated.emit(summary, details)
+            except Exception as exc:
+                self.signals.status_failed.emit(str(exc))
+
+            if self.stop_event.wait(2.0):
+                break
+
+    def _run_video_stream(self) -> None:
+        run_printer_video_stream(
+            printer_ip=self.printer["ip"],
+            on_frame=lambda frame: self.signals.frame_updated.emit(frame),
+            stop_requested=self.stop_event.is_set,
+            on_error=lambda exc: self.signals.video_failed.emit(str(exc)),
+        )
+
+    def _update_status(self, summary: str, details: str) -> None:
+        self.summary_label.setText(f"Status: {summary}")
+        self.status_text.setPlainText(details)
+
+    def _show_status_error(self, message: str) -> None:
+        self.summary_label.setText("Status: Unknown")
+        self.status_text.setPlainText(f"Status fetch failed:\n{message}")
+
+    def _update_video_frame(self, frame_bytes: bytes) -> None:
+        image = QImage.fromData(frame_bytes)
+        if image.isNull():
+            return
+
+        pixmap = QPixmap.fromImage(image)
+        scaled = pixmap.scaled(
+            self.video_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.video_label.setPixmap(scaled)
+        self.video_status_label.setText("Live video")
+
+    def _show_video_error(self, message: str) -> None:
+        self.video_status_label.setText(f"Video unavailable: {message}")
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        pixmap = self.video_label.pixmap()
+        if pixmap is None:
+            return
+
+        self.video_label.setPixmap(
+            pixmap.scaled(
+                self.video_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
+
+    def closeEvent(self, event) -> None:
+        self.stop_event.set()
+        super().closeEvent(event)
+
+
+class PrinterDiscoveryWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.signals = AppSignals()
+        self.signals.discovery_complete.connect(self._show_printers)
+        self.signals.discovery_failed.connect(self._show_error)
+        self.detail_windows: list[PrinterDetailWindow] = []
+        self.printers: list[dict] = []
+
+        self.setWindowTitle("Printer Discovery")
+        self.resize(860, 480)
+        self._build_ui()
         self._start_discovery()
 
-    def applicationShouldTerminateAfterLastWindowClosed_(self, _app):
-        return True
+    def _build_ui(self) -> None:
+        container = QWidget()
+        layout = QVBoxLayout(container)
 
-    def _build_window(self):
-        frame = NSMakeRect(240.0, 240.0, 760.0, 420.0)
-        style = (
-            NSWindowStyleMaskTitled
-            | NSWindowStyleMaskClosable
-            | NSWindowStyleMaskResizable
-            | NSWindowStyleMaskMiniaturizable
+        self.status_label = QLabel("Discovering printers...")
+        layout.addWidget(self.status_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        layout.addWidget(self.progress_bar)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(
+            ["Serial", "Machine Type", "IP Address", "Status"]
         )
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setAlternatingRowColors(True)
+        self.table.doubleClicked.connect(self._open_selected_printer)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table, 1)
 
-        self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            frame,
-            style,
-            NSBackingStoreBuffered,
-            False,
-        )
-        self.window.setTitle_("Printer Discovery")
-        self.window.makeKeyAndOrderFront_(None)
+        self.setCentralWidget(container)
 
-        content_view = self.window.contentView()
-
-        self.status_label = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(20.0, 375.0, 720.0, 24.0)
-        )
-        self.status_label.setEditable_(False)
-        self.status_label.setBordered_(False)
-        self.status_label.setDrawsBackground_(False)
-        self.status_label.setStringValue_("Discovering printers...")
-        content_view.addSubview_(self.status_label)
-
-        self.spinner = NSProgressIndicator.alloc().initWithFrame_(
-            NSMakeRect(20.0, 345.0, 160.0, 20.0)
-        )
-        self.spinner.setIndeterminate_(True)
-        self.spinner.startAnimation_(None)
-        content_view.addSubview_(self.spinner)
-
-        scroll_view = NSScrollView.alloc().initWithFrame_(
-            NSMakeRect(20.0, 20.0, 720.0, 310.0)
-        )
-        scroll_view.setHasVerticalScroller_(True)
-        scroll_view.setBorderType_(NSBezelBorder)
-
-        self.table_view = NSTableView.alloc().initWithFrame_(
-            NSMakeRect(0.0, 0.0, 720.0, 310.0)
-        )
-        self.table_view.setDataSource_(self.data_source)
-
-        for identifier, title, width in [
-            ("serial", "Serial", 220.0),
-            ("machineTypeId", "Machine Type", 200.0),
-            ("ip", "IP Address", 180.0),
-            ("status", "Status", 120.0),
-        ]:
-            column = NSTableColumn.alloc().initWithIdentifier_(identifier)
-            column.setWidth_(width)
-            column.headerCell().setStringValue_(title)
-            self.table_view.addTableColumn_(column)
-
-        scroll_view.setDocumentView_(self.table_view)
-        content_view.addSubview_(scroll_view)
-
-    def _start_discovery(self):
+    def _start_discovery(self) -> None:
         threading.Thread(
             target=self._discover_printers,
             daemon=True,
         ).start()
 
-    def _discover_printers(self):
+    def _discover_printers(self) -> None:
         try:
-            printers = self._discover_printers_with_status()
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "showPrinters:",
-                printers,
-                False,
-            )
+            printers = discover_printers(DEFAULT_SUBNETS)
+            printers = self._attach_status_labels(printers)
+            self.signals.discovery_complete.emit(printers)
         except Exception as exc:
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "showError:",
-                str(exc),
-                False,
-            )
+            self.signals.discovery_failed.emit(str(exc))
 
-    def _discover_printers_with_status(self):
-        printers = discover_printers(DEFAULT_SUBNETS)
-
+    def _attach_status_labels(self, printers: list[dict]) -> list[dict]:
         if not printers:
             return []
 
-        printers_with_status = []
+        printers_with_status: list[dict] = []
 
         with ThreadPoolExecutor(max_workers=min(8, len(printers))) as executor:
             futures = {
@@ -182,7 +320,7 @@ class AppDelegate(NSObject):
             key=lambda printer: printer["serial"],
         )
 
-    def _get_status_label(self, printer_ip):
+    def _get_status_label(self, printer_ip: str) -> str:
         try:
             response = get_printer_status(printer_ip)
             is_printing = response["Parameters"]["isPrinting"]
@@ -190,33 +328,51 @@ class AppDelegate(NSObject):
         except Exception:
             return "Unknown"
 
-    def showPrinters_(self, printers):
-        self.spinner.stopAnimation_(None)
-        self.spinner.setHidden_(True)
-        self.data_source.setPrinters_(printers)
-        self.table_view.reloadData()
+    def _show_printers(self, printers: list[dict]) -> None:
+        self.printers = printers
+        self.progress_bar.hide()
+        self.table.setRowCount(len(printers))
+
+        for row, printer in enumerate(printers):
+            for column, key in enumerate(
+                ["serial", "machineTypeId", "ip", "status"]
+            ):
+                item = QTableWidgetItem(str(printer[key]))
+                self.table.setItem(row, column, item)
+
+        self.table.resizeColumnsToContents()
 
         if printers:
-            self.status_label.setStringValue_(
-                f"Found {len(printers)} printer(s)."
-            )
+            self.status_label.setText(f"Found {len(printers)} printer(s).")
         else:
-            self.status_label.setStringValue_("No printers found.")
+            self.status_label.setText("No printers found.")
 
-    def showError_(self, message):
-        self.spinner.stopAnimation_(None)
-        self.spinner.setHidden_(True)
-        self.status_label.setStringValue_(f"Printer discovery failed: {message}")
+    def _show_error(self, message: str) -> None:
+        self.progress_bar.hide()
+        self.status_label.setText(f"Printer discovery failed: {message}")
+
+    def _open_selected_printer(self, *_args) -> None:
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.printers):
+            return
+
+        window = PrinterDetailWindow(self.printers[row])
+        window.show()
+        self.detail_windows.append(window)
 
 
-def main():
-    app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+def main() -> int:
+    app = QApplication(sys.argv)
+    window = PrinterDiscoveryWindow()
+    window.show()
 
-    delegate = AppDelegate.alloc().init()
-    app.setDelegate_(delegate)
-    AppHelper.runEventLoop()
+    signal.signal(signal.SIGINT, lambda *_args: app.quit())
+    timer = QTimer()
+    timer.timeout.connect(lambda: None)
+    timer.start(100)
+
+    return app.exec_()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
