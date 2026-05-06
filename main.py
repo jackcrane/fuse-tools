@@ -8,12 +8,15 @@ from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFontDatabase, QImage, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -108,6 +111,40 @@ class DetailSignals(QObject):
     frame_updated = pyqtSignal(bytes)
     video_failed = pyqtSignal(str)
     recording_state_changed = pyqtSignal(bool, str)
+    stop_recording_requested = pyqtSignal(str)
+
+
+class RecordingStopDialog(QDialog):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Recording End Condition")
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel("When should this recording end?")
+        )
+
+        self.manual_option = QRadioButton("Manually")
+        self.manual_option.setChecked(True)
+        layout.addWidget(self.manual_option)
+
+        self.idle_option = QRadioButton(
+            "When the printer's status switches to idle"
+        )
+        layout.addWidget(self.idle_option)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_mode(self) -> str:
+        if self.idle_option.isChecked():
+            return "until_idle"
+        return "manual"
 
 
 class PrinterDetailWindow(QWidget):
@@ -117,6 +154,7 @@ class PrinterDetailWindow(QWidget):
         self.stop_event = threading.Event()
         self.recorder: Optional[VideoRecorder] = None
         self.recording_started_at: Optional[float] = None
+        self.recording_stop_mode = "manual"
         self.signals = DetailSignals()
         self.signals.status_updated.connect(self._update_status)
         self.signals.status_failed.connect(self._show_status_error)
@@ -124,6 +162,9 @@ class PrinterDetailWindow(QWidget):
         self.signals.video_failed.connect(self._show_video_error)
         self.signals.recording_state_changed.connect(
             self._set_recording_state
+        )
+        self.signals.stop_recording_requested.connect(
+            self._handle_stop_recording_requested
         )
 
         self.setWindowTitle(f'{self.printer["serial"]} Details')
@@ -256,6 +297,15 @@ class PrinterDetailWindow(QWidget):
         self.summary_label.setText(f"Status: {summary}")
         self.status_text.setPlainText(details)
 
+        if (
+            self.recorder is not None
+            and self.recording_stop_mode == "until_idle"
+            and summary == "Idle"
+        ):
+            self.signals.stop_recording_requested.emit(
+                "Recording stopped automatically when the printer became idle."
+            )
+
     def _show_status_error(self, message: str) -> None:
         self.summary_label.setText("Status: Unknown")
         self.status_text.setPlainText(f"Status fetch failed:\n{message}")
@@ -307,6 +357,10 @@ class PrinterDetailWindow(QWidget):
         if not output_path:
             return
 
+        stop_dialog = RecordingStopDialog(self)
+        if stop_dialog.exec_() != QDialog.Accepted:
+            return
+
         try:
             recorder = VideoRecorder(output_path)
             recorder.start()
@@ -318,15 +372,17 @@ class PrinterDetailWindow(QWidget):
 
         self.recorder = recorder
         self.recording_started_at = time.time()
+        self.recording_stop_mode = stop_dialog.selected_mode()
         self.signals.recording_state_changed.emit(
             True,
             f"Recording to {output_path}",
         )
 
-    def _stop_recording(self) -> None:
+    def _stop_recording(self, status_message: str = "Live video") -> None:
         recorder = self.recorder
         self.recorder = None
         self.recording_started_at = None
+        self.recording_stop_mode = "manual"
 
         if recorder is not None:
             try:
@@ -336,7 +392,13 @@ class PrinterDetailWindow(QWidget):
                     f"Recording stop failed: {exc}"
                 )
 
-        self.signals.recording_state_changed.emit(False, "Live video")
+        self.signals.recording_state_changed.emit(False, status_message)
+
+    def _handle_stop_recording_requested(self, status_message: str) -> None:
+        if self.recorder is None:
+            return
+
+        self._stop_recording(status_message)
 
     def _set_recording_state(
         self,
