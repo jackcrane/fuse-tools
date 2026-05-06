@@ -1,7 +1,5 @@
 import asyncio
 import json
-import os
-import shutil
 import subprocess
 import threading
 import time
@@ -9,6 +7,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import websockets
+
+from src.video.ffmpeg import resolve_ffmpeg_command
 
 
 FPS = 15
@@ -21,20 +21,7 @@ class VideoRecorder:
         self.output_path = str(Path(output_path))
         self._lock = threading.Lock()
         self._process: Optional[subprocess.Popen] = None
-        self._ffmpeg_command = self._resolve_ffmpeg_command()
-
-    @staticmethod
-    def _resolve_ffmpeg_command() -> str:
-        command = shutil.which("ffmpeg")
-        if command is None and os.name == "nt":
-            command = shutil.which("ffmpeg.exe")
-
-        if command is None:
-            raise RuntimeError(
-                "ffmpeg was not found. Install ffmpeg and add it to PATH."
-            )
-
-        return command
+        self._ffmpeg_command = resolve_ffmpeg_command()
 
     def start(self) -> None:
         with self._lock:
