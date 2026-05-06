@@ -7,6 +7,7 @@ from typing import Callable, Optional
 
 import websockets
 
+
 FPS = 15
 POLL_INTERVAL_MS = 1000 / FPS
 FFMPEG_INPUT_FORMAT = "mjpeg"
@@ -73,23 +74,17 @@ async def stream_printer_video(
     on_error: Optional[Callable[[Exception], None]] = None,
 ) -> None:
     try:
-        async with websockets.connect(
-            f"ws://{printer_ip}:8084/"
-        ) as websocket:
+        async with websockets.connect(f"ws://{printer_ip}:8084/") as websocket:
             async def poll() -> None:
                 while not stop_requested():
-                    await websocket.send(
-                        json.dumps({"action": "start"})
-                    )
+                    await websocket.send(json.dumps({"action": "start"}))
                     await asyncio.sleep(POLL_INTERVAL_MS / 1000)
 
             async def receive() -> None:
                 while not stop_requested():
                     data = await websocket.recv()
-
                     if isinstance(data, str):
                         continue
-
                     on_frame(data)
 
             await asyncio.gather(poll(), receive())
@@ -111,15 +106,4 @@ def run_printer_video_stream(
             stop_requested=stop_requested,
             on_error=on_error,
         )
-    )
-
-
-if __name__ == "__main__":
-    def print_frame_info(frame_bytes: bytes) -> None:
-        print(f"Received frame: {len(frame_bytes)} bytes")
-
-    run_printer_video_stream(
-        printer_ip="10.120.8.38",
-        on_frame=print_frame_info,
-        stop_requested=lambda: False,
     )

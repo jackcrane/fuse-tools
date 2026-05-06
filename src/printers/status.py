@@ -78,12 +78,7 @@ def get_printer_status(
 
     json_payload = json.dumps(request, indent=4) + "\n"
     json_bytes = json_payload.encode("utf-8")
-
-    payload = (
-        struct.pack("<I", len(json_bytes))
-        + json_bytes
-        + b"\x00" * 8
-    )
+    payload = struct.pack("<I", len(json_bytes)) + json_bytes + b"\x00" * 8
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(3)
@@ -91,21 +86,16 @@ def get_printer_status(
     try:
         sock.connect((printer_ip, port))
         sock.sendall(payload)
-
         response = b""
 
         while True:
             try:
                 chunk = sock.recv(4096)
-
                 if not chunk:
                     break
-
                 response += chunk
-
             except socket.timeout:
                 break
-
     finally:
         sock.close()
 
@@ -113,11 +103,8 @@ def get_printer_status(
         raise ValueError("Invalid response from printer")
 
     declared_length = struct.unpack("<I", response[:4])[0]
-
     body = response[4 : 4 + declared_length]
-
     decoded = body.decode("utf-8", errors="ignore")
-
     start = decoded.find("{")
     end = decoded.rfind("}")
 
@@ -125,9 +112,3 @@ def get_printer_status(
         raise ValueError("No JSON object found in response")
 
     return json.loads(decoded[start : end + 1])
-
-
-if __name__ == "__main__":
-    status = get_printer_status("10.120.8.38")
-
-    print(status)

@@ -31,23 +31,6 @@ class PrinterInfo(TypedDict):
     Serial: str
 
 
-class PrinterInformationParameters(TypedDict):
-    capabilities: list
-    connectionInterface: str
-    ipAddresses: List[str]
-    printer: PrinterInfo
-    printerID: str
-    version: dict
-
-
-class PrinterInformationResponse(TypedDict):
-    Id: str
-    Parameters: PrinterInformationParameters
-    ReplyToMethod: str
-    Success: bool
-    Version: int
-
-
 def send_protocol_request(
     ip: str,
     method: str,
@@ -60,13 +43,7 @@ def send_protocol_request(
 
     json_payload = json.dumps(request) + "\n"
     json_bytes = json_payload.encode("utf-8")
-
-    payload = (
-        struct.pack("<I", len(json_bytes))
-        + json_bytes
-        + b"\x00" * 8
-    )
-
+    payload = struct.pack("<I", len(json_bytes)) + json_bytes + b"\x00" * 8
     response = b""
 
     try:
@@ -75,21 +52,16 @@ def send_protocol_request(
             timeout=REQUEST_TIMEOUT,
         ) as sock:
             sock.settimeout(REQUEST_TIMEOUT)
-
             sock.sendall(payload)
 
             while True:
                 try:
                     chunk = sock.recv(4096)
-
                     if not chunk:
                         break
-
                     response += chunk
-
                 except socket.timeout:
                     break
-
     except Exception:
         return None
 
@@ -98,11 +70,8 @@ def send_protocol_request(
 
     try:
         declared_length = struct.unpack("<I", response[:4])[0]
-
         body = response[4 : 4 + declared_length]
-
         decoded = body.decode("utf-8", errors="ignore")
-
         start = decoded.find("{")
         end = decoded.rfind("}")
 
@@ -110,7 +79,6 @@ def send_protocol_request(
             return None
 
         return json.loads(decoded[start : end + 1])
-
     except Exception:
         return None
 
@@ -127,14 +95,12 @@ def probe_printer(ip: str) -> Optional[Printer]:
 
         parameters = response["Parameters"]
         printer = parameters["printer"]
-
         return {
             "ip": ip,
             "serial": printer["Serial"],
             "machineTypeId": printer["MachineTypeId"],
             "printerId": parameters["printerID"],
         }
-
     except Exception:
         return None
 
@@ -142,7 +108,6 @@ def probe_printer(ip: str) -> Optional[Printer]:
 def iter_ips(subnets: List[str]) -> Generator[str, None, None]:
     for subnet in subnets:
         network = ipaddress.ip_network(subnet, strict=False)
-
         for ip in network.hosts():
             yield str(ip)
 
@@ -151,9 +116,7 @@ def is_port_open(ip: str) -> bool:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(CONNECT_TIMEOUT)
-
             return sock.connect_ex((ip, PORT)) == 0
-
     except Exception:
         return False
 
@@ -161,7 +124,6 @@ def is_port_open(ip: str) -> bool:
 def worker(ip: str) -> Optional[Printer]:
     if not is_port_open(ip):
         return None
-
     return probe_printer(ip)
 
 
@@ -170,18 +132,13 @@ def discover_printers(
     on_found: Optional[Callable[[Printer], None]] = None,
 ) -> List[Printer]:
     printers_by_id: dict[str, Printer] = {}
-
     ips = list(iter_ips(subnets))
 
     print(f"Scanning {len(ips)} hosts")
-
     completed = 0
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [
-            executor.submit(worker, ip)
-            for ip in ips
-        ]
+        futures = [executor.submit(worker, ip) for ip in ips]
 
         for future in as_completed(futures):
             completed += 1
@@ -191,27 +148,15 @@ def discover_printers(
 
             try:
                 result = future.result()
-
                 if not result:
                     continue
 
                 printers_by_id[result["printerId"]] = result
-
-                print(
-                    f'Found {result["serial"]} '
-                    f'at {result["ip"]}'
-                )
+                print(f'Found {result["serial"]} at {result["ip"]}')
 
                 if on_found is not None:
                     on_found(result)
-
             except Exception:
                 pass
 
     return list(printers_by_id.values())
-
-
-if __name__ == "__main__":
-    printers = discover_printers(DEFAULT_SUBNETS)
-
-    print(json.dumps(printers, indent=2))
