@@ -1,7 +1,10 @@
 import asyncio
 import json
+import os
+import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -18,6 +21,20 @@ class VideoRecorder:
         self.output_path = str(Path(output_path))
         self._lock = threading.Lock()
         self._process: Optional[subprocess.Popen] = None
+        self._ffmpeg_command = self._resolve_ffmpeg_command()
+
+    @staticmethod
+    def _resolve_ffmpeg_command() -> str:
+        command = shutil.which("ffmpeg")
+        if command is None and os.name == "nt":
+            command = shutil.which("ffmpeg.exe")
+
+        if command is None:
+            raise RuntimeError(
+                "ffmpeg was not found. Install ffmpeg and add it to PATH."
+            )
+
+        return command
 
     def start(self) -> None:
         with self._lock:
@@ -26,7 +43,7 @@ class VideoRecorder:
 
             self._process = subprocess.Popen(
                 [
-                    "ffmpeg",
+                    self._ffmpeg_command,
                     "-y",
                     "-loglevel",
                     "error",
@@ -45,15 +62,34 @@ class VideoRecorder:
                     self.output_path,
                 ],
                 stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
+
+            # Fail fast if ffmpeg exits immediately, which is common when the
+            # binary is missing dependencies or the chosen encoder is unavailable.
+            time.sleep(0.2)
+            if self._process.poll() is not None:
+                stderr = b""
+                if self._process.stderr is not None:
+                    stderr = self._process.stderr.read().strip()
+                self._process = None
+                detail = stderr.decode("utf-8", errors="ignore") or (
+                    "ffmpeg exited before recording could begin."
+                )
+                raise RuntimeError(detail)
 
     def write_frame(self, frame_bytes: bytes) -> None:
         with self._lock:
             if self._process is None or self._process.stdin is None:
                 return
 
-            self._process.stdin.write(frame_bytes)
-            self._process.stdin.flush()
+            try:
+                self._process.stdin.write(frame_bytes)
+                self._process.stdin.flush()
+            except BrokenPipeError as exc:
+                raise RuntimeError(
+                    "ffmpeg stopped accepting video frames."
+                ) from exc
 
     def stop(self) -> None:
         with self._lock:
