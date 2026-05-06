@@ -1,6 +1,8 @@
 import hashlib
 import os
+import platform
 import shutil
+import subprocess
 import tempfile
 import threading
 import urllib.error
@@ -13,6 +15,7 @@ WINDOWS_FFMPEG_URL = (
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 )
 WINDOWS_FFMPEG_SHA256_URL = f"{WINDOWS_FFMPEG_URL}.sha256"
+MACOS_FFMPEG_URL = "https://evermeet.cx/ffmpeg/getrelease/zip"
 DOWNLOAD_TIMEOUT_SECONDS = 120
 _DOWNLOAD_LOCK = threading.Lock()
 
@@ -31,6 +34,8 @@ def resolve_ffmpeg_command() -> str:
 
     if os.name == "nt":
         return str(_ensure_windows_ffmpeg())
+    if platform.system() == "Darwin":
+        return str(_ensure_macos_ffmpeg())
 
     raise RuntimeError(
         "ffmpeg was not found. Install ffmpeg and add it to PATH."
@@ -59,11 +64,46 @@ def _ensure_windows_ffmpeg() -> Path:
         return target_path
 
 
+def _ensure_macos_ffmpeg() -> Path:
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        raise RuntimeError(
+            "ffmpeg was not found. Automatic download is only configured for Intel Macs right now; on Apple Silicon, install ffmpeg manually and add it to PATH."
+        )
+
+    target_path = _bundled_ffmpeg_path()
+    if target_path.exists():
+        return target_path
+
+    with _DOWNLOAD_LOCK:
+        if target_path.exists():
+            return target_path
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory(
+            prefix="fuse-tools-ffmpeg-",
+        ) as temp_dir:
+            archive_path = Path(temp_dir) / "ffmpeg-macos.zip"
+            _download_file(MACOS_FFMPEG_URL, archive_path)
+            _extract_ffmpeg_executable(archive_path, target_path)
+            _remove_quarantine_attribute(target_path)
+            target_path.chmod(0o755)
+
+        return target_path
+
+
 def _bundled_ffmpeg_path() -> Path:
-    return Path.home() / ".fuse-tools" / "ffmpeg" / "ffmpeg.exe"
+    suffix = ".exe" if os.name == "nt" else ""
+    return Path.home() / ".fuse-tools" / "ffmpeg" / f"ffmpeg{suffix}"
+
+
+def _log(message: str) -> None:
+    print(f"[fuse-tools] {message}", flush=True)
 
 
 def _download_file(url: str, destination: Path) -> None:
+    _log(f"Downloading ffmpeg from {url}...")
     try:
         with urllib.request.urlopen(
             url,
@@ -74,6 +114,7 @@ def _download_file(url: str, destination: Path) -> None:
         raise RuntimeError(
             f"Unable to download ffmpeg from {url}: {exc}"
         ) from exc
+    _log(f"Finished downloading ffmpeg to {destination}.")
 
 
 def _verify_archive_checksum(archive_path: Path) -> None:
@@ -98,20 +139,22 @@ def _extract_ffmpeg_executable(
     archive_path: Path,
     target_path: Path,
 ) -> None:
+    target_name = target_path.name.lower()
     try:
         with zipfile.ZipFile(archive_path) as archive:
             ffmpeg_member = next(
                 (
                     name
                     for name in archive.namelist()
-                    if name.lower().endswith("/bin/ffmpeg.exe")
+                    if name.lower().endswith(f"/{target_name}")
+                    or name.lower() == target_name
                 ),
                 None,
             )
 
             if ffmpeg_member is None:
                 raise RuntimeError(
-                    "Downloaded ffmpeg archive did not contain bin/ffmpeg.exe."
+                    f"Downloaded ffmpeg archive did not contain {target_path.name}."
                 )
 
             with archive.open(ffmpeg_member) as source:
@@ -123,3 +166,15 @@ def _extract_ffmpeg_executable(
         raise RuntimeError(
             "Downloaded ffmpeg archive was not a valid ZIP file."
         ) from exc
+
+
+def _remove_quarantine_attribute(target_path: Path) -> None:
+    try:
+        subprocess.run(
+            ["xattr", "-dr", "com.apple.quarantine", str(target_path)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
