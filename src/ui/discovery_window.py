@@ -1,17 +1,26 @@
+import ipaddress
 import threading
 
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtWidgets import (
+    QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from src.printers.discovery import DEFAULT_SUBNETS, discover_printers
+from src.printers.discovery import (
+    DEFAULT_SUBNETS,
+    discover_printers,
+    probe_printer,
+)
 from src.printers.status import get_printer_status
 from src.ui.detail_window import PrinterDetailWindow
 
@@ -21,6 +30,7 @@ class AppSignals(QObject):
     printer_status_updated = pyqtSignal(str, str)
     discovery_complete = pyqtSignal(list)
     discovery_failed = pyqtSignal(str)
+    manual_printer_failed = pyqtSignal(str)
 
 
 class PrinterDiscoveryWindow(QMainWindow):
@@ -33,6 +43,9 @@ class PrinterDiscoveryWindow(QMainWindow):
         )
         self.signals.discovery_complete.connect(self._show_printers)
         self.signals.discovery_failed.connect(self._show_error)
+        self.signals.manual_printer_failed.connect(
+            self._show_manual_printer_error
+        )
         self.detail_windows: list[PrinterDetailWindow] = []
         self.printers: list[dict] = []
         self.printer_rows: dict[str, int] = {}
@@ -48,6 +61,14 @@ class PrinterDiscoveryWindow(QMainWindow):
 
         self.status_label = QLabel("Discovering printers...")
         layout.addWidget(self.status_label)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.addStretch()
+
+        self.add_ip_button = QPushButton("Add Printer by IP")
+        self.add_ip_button.clicked.connect(self._prompt_for_printer_ip)
+        actions_layout.addWidget(self.add_ip_button)
+        layout.addLayout(actions_layout)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
@@ -113,6 +134,48 @@ class PrinterDiscoveryWindow(QMainWindow):
     def _show_error(self, message: str) -> None:
         self.progress_bar.hide()
         self.status_label.setText(f"Printer discovery failed: {message}")
+
+    def _prompt_for_printer_ip(self) -> None:
+        printer_ip, accepted = QInputDialog.getText(
+            self,
+            "Add Printer by IP",
+            "Printer IP address:",
+        )
+        if not accepted:
+            return
+
+        printer_ip = printer_ip.strip()
+        if not printer_ip:
+            return
+
+        try:
+            ipaddress.ip_address(printer_ip)
+        except ValueError:
+            self._show_manual_printer_error(
+                f'"{printer_ip}" is not a valid IP address.'
+            )
+            return
+
+        self.status_label.setText(f"Looking up printer at {printer_ip}...")
+        threading.Thread(
+            target=self._probe_manual_printer,
+            args=(printer_ip,),
+            daemon=True,
+        ).start()
+
+    def _probe_manual_printer(self, printer_ip: str) -> None:
+        printer = probe_printer(printer_ip)
+        if not printer:
+            self.signals.manual_printer_failed.emit(
+                f"No compatible printer responded at {printer_ip}."
+            )
+            return
+
+        self._handle_printer_found(printer)
+
+    def _show_manual_printer_error(self, message: str) -> None:
+        self.status_label.setText(message)
+        QMessageBox.warning(self, "Printer Not Found", message)
 
     def _add_printer(self, printer: dict) -> None:
         if printer["printerId"] in self.printer_rows:
